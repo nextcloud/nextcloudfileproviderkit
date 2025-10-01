@@ -40,7 +40,7 @@ public final class FilesDatabaseManager: Sendable {
         )
     }
 
-    private static let schemaVersion = SchemaVersion.addedLockTokenPropertyToRealmItemMetadata
+    private static let schemaVersion = SchemaVersion.addedIsLockFileOfLocalOriginToRealmItemMetadata
     let logger: FileProviderLogger
     let account: Account
 
@@ -643,25 +643,32 @@ public final class FilesDatabaseManager: Sendable {
         var handledDeleteOcIds = Set(deleted.map(\.ocId))
         
         deleted
-            .map {
+            .map { // assemble remote location
                 var serverUrl = $0.serverUrl + "/" + $0.fileName
-                if serverUrl.last == "/" { serverUrl.removeLast() }
+                
+                if serverUrl.last == "/" {
+                    serverUrl.removeLast()
+                }
+                
                 return serverUrl
             }
             .forEach { serverUrl in
-                logger.debug("Checking deleted item.", [.url: serverUrl])
+                logger.debug("Verifying deleted item.", [.url: serverUrl])
 
-                itemMetadatas
-                    .where {
-                        $0.serverUrl.starts(with: serverUrl) && $0.syncTime > date
+                itemMetadatas.where {
+                    $0.serverUrl.starts(with: serverUrl) && $0.syncTime > date
+                }.forEach { metadata in
+                    guard metadata.isLockFileOfLocalOrigin == false else {
+                        logger.info("Excluding item from deletion because it is a lock file from local origin.", [.item: metadata])
+                        return
                     }
-                    .forEach { metadata in
-                        guard !handledDeleteOcIds.contains(metadata.ocId) else {
-                            return
-                        }
-                        
-                        deleted.append(SendableItemMetadata(value: metadata))
+                    
+                    guard !handledDeleteOcIds.contains(metadata.ocId) else {
+                        return
                     }
+                    
+                    deleted.append(SendableItemMetadata(value: metadata))
+                }
             }
 
         return (updated, deleted)
