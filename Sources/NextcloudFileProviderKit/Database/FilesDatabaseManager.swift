@@ -558,6 +558,7 @@ public final class FilesDatabaseManager: Sendable {
 
             return nil
         }
+        
         return NSFileProviderItemIdentifier(parentDirectoryMetadata.ocId)
     }
 
@@ -578,6 +579,7 @@ public final class FilesDatabaseManager: Sendable {
             depth: .target,
             log: logger.log
         )
+        
         guard error == nil, let parentMetadata = metadatas?.first else {
             logger.error("Could not retrieve parent item identifier remotely.", [
                 .error: error,
@@ -602,15 +604,13 @@ public final class FilesDatabaseManager: Sendable {
         managedMaterialisedItemMetadatas(account: account).toUnmanagedResults()
     }
 
-    public func pendingWorkingSetChanges(
-        account: Account, since date: Date
-    ) -> (updated: [SendableItemMetadata], deleted: [SendableItemMetadata]) {
+    public func pendingWorkingSetChanges(account: Account, since date: Date) -> (updated: [SendableItemMetadata], deleted: [SendableItemMetadata]) {
         let accId = account.ncKitAccount
         let pending = managedMaterialisedItemMetadatas(account: accId).where { $0.syncTime > date }
         var updated = pending.where { !$0.deleted }.toUnmanagedResults()
         var deleted = pending.where { $0.deleted }.toUnmanagedResults()
-
         var handledUpdateOcIds = Set(updated.map(\.ocId))
+        
         updated
             .map {
                 var serverUrl = $0.serverUrl + "/" + $0.fileName
@@ -618,30 +618,30 @@ public final class FilesDatabaseManager: Sendable {
                 return serverUrl
             }
             .forEach { serverUrl in
-                logger.debug("Checking (updated) \(serverUrl)")
+                logger.debug("Checking updated item...", [.url: serverUrl])
 
                 itemMetadatas
                     .where { $0.serverUrl == serverUrl && $0.syncTime > date }
                     .forEach { metadata in
-                        logger.debug("Checking item: \(metadata.fileName)")
-
                         guard !handledUpdateOcIds.contains(metadata.ocId) else {
                             return
                         }
 
                         handledUpdateOcIds.insert(metadata.ocId)
                         let sendableMetadata = SendableItemMetadata(value: metadata)
+
                         if metadata.deleted {
                             deleted.append(sendableMetadata)
                         } else {
                             updated.append(sendableMetadata)
                         }
 
-                        logger.debug("Appended item: \(metadata.fileName)")
+                        logger.debug("Appended item.", [.name: metadata.fileName])
                     }
             }
 
         var handledDeleteOcIds = Set(deleted.map(\.ocId))
+        
         deleted
             .map {
                 var serverUrl = $0.serverUrl + "/" + $0.fileName
@@ -649,12 +649,17 @@ public final class FilesDatabaseManager: Sendable {
                 return serverUrl
             }
             .forEach { serverUrl in
-                logger.debug("Checking (deletion) \(serverUrl)")
+                logger.debug("Checking deleted item.", [.url: serverUrl])
 
                 itemMetadatas
-                    .where { $0.serverUrl.starts(with: serverUrl) && $0.syncTime > date }
+                    .where {
+                        $0.serverUrl.starts(with: serverUrl) && $0.syncTime > date
+                    }
                     .forEach { metadata in
-                        guard !handledDeleteOcIds.contains(metadata.ocId) else { return }
+                        guard !handledDeleteOcIds.contains(metadata.ocId) else {
+                            return
+                        }
+                        
                         deleted.append(SendableItemMetadata(value: metadata))
                     }
             }
