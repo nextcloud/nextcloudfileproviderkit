@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2024 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: LGPL-3.0-or-later
+version = 1
+SPDX-PackageName = "NextcloudKit"
+SPDX-PackageSupplier = "2024 Nextcloud GmbH and Nextcloud contributors"
+SPDX-PackageDownloadLocation = "https://github.com/nextcloud/NextcloudKit"
+
+[[annotations]]
+path = [
+    "NextcloudFileProviderKit.png", 
+    "NextcloudFileProviderKit.pxd", 
+    "NextcloudFileProviderKit.svg"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2024 Nextcloud GmbH"
+SPDX-License-Identifier = "LicenseRef-NextcloudTrademarks"
+
+[[annotations]]
+path = [
+    ".swiftformat",
+    ".swift-version"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Nextcloud GmbH and Nextcloud contributors"
+SPDX-License-Identifier = "LGPL-3.0-or-later"
