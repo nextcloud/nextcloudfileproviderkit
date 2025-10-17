@@ -7,16 +7,6 @@ import Foundation
 import NextcloudCapabilitiesKit
 import NextcloudKit
 
-public enum EnumerateDepth: String {
-    case target = "0"
-    case targetAndDirectChildren = "1"
-    case targetAndAllChildren = "infinity"
-}
-
-public enum AuthenticationAttemptResultState: Int {
-    case authenticationError, connectionError, success
-}
-
 ///
 /// Abstraction of the Nextcloud server APIs to call from the file provider extension.
 ///

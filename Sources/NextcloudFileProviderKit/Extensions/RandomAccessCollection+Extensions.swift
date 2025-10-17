@@ -31,13 +31,13 @@ extension RandomAccessCollection {
     }
 
     /// Performs an asynchronous `forEach` operation on the collection in concurrent chunks.
-    func concurrentChunkedForEach(
-        into size: Int = defaultChunkSize, operation: @escaping (Element) async -> Void
-    ) async {
+    func concurrentChunkedForEach(into size: Int = defaultChunkSize, operation: @escaping (Element) async -> Void) async {
         await withTaskGroup(of: Void.self) { group in
             for chunk in chunked(into: size) {
+                let chunkArray = Array(chunk) // Convert to Array to ensure Sendable
+
                 group.addTask {
-                    for element in chunk {
+                    for element in chunkArray {
                         await operation(element)
                     }
                 }
@@ -46,17 +46,19 @@ extension RandomAccessCollection {
     }
 
     /// Performs an asynchronous `compactMap` operation on the collection in concurrent chunks.
-    func concurrentChunkedCompactMap<T>(
-        into size: Int = defaultChunkSize, transform: @escaping (Element) throws -> T?
-    ) async throws -> [T] {
+    func concurrentChunkedCompactMap<T>(into size: Int = defaultChunkSize, transform: @escaping (Element) throws -> T?) async throws -> [T] where T: Sendable {
         try await withThrowingTaskGroup(of: [T].self) { group in
             var results = [T]()
             // Reserving capacity is still a good optimization, though we can't know the exact final count.
             results.reserveCapacity(Int(self.count))
 
             for chunk in chunked(into: size) {
+                let chunkArray = Array(chunk) // Convert to Array to ensure Sendable
+
                 group.addTask {
-                    try chunk.compactMap { try transform($0) }
+                    try chunkArray.compactMap {
+                        try transform($0)
+                    }
                 }
             }
 
