@@ -162,8 +162,7 @@ public extension RemoteInterface {
     ) async -> (account: String, capabilities: Capabilities?, data: Data?, error: NKError) {
         let ncKitAccount = account.ncKitAccount
         await RetrievedCapabilitiesActor.shared.awaitFetchCompletion(forAccount: ncKitAccount)
-        guard let lastRetrieval = await RetrievedCapabilitiesActor.shared.data[ncKitAccount],
-              lastRetrieval.retrievedAt.timeIntervalSince(Date()) > -CapabilitiesFetchInterval
+        guard let lastRetrieval = await RetrievedCapabilitiesActor.shared.getCapabilities(for: ncKitAccount), lastRetrieval.retrievedAt.timeIntervalSince(Date()) > -CapabilitiesFetchInterval
         else {
             return await fetchCapabilities(
                 account: account, options: options, taskHandler: taskHandler

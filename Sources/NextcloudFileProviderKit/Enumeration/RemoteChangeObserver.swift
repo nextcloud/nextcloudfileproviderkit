@@ -397,7 +397,7 @@ extension RemoteChangeObserver: URLSessionWebSocketDelegate {
 // MARK: - NextcloudKitDelegate methods
 
 extension RemoteChangeObserver: NextcloudKitDelegate {
-    nonisolated public func authenticationChallenge(_: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    nonisolated public func authenticationChallenge(_: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @Sendable @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         Task { [weak self] in
             guard let self else {
                 return
@@ -411,12 +411,7 @@ extension RemoteChangeObserver: NextcloudKitDelegate {
             logger.debug("Received auth challenge with method: \(authMethod)")
 
             if authMethod == NSURLAuthenticationMethodHTTPBasic {
-                let credential = URLCredential(
-                    user: account.username,
-                    password: account.password,
-                    persistence: .forSession
-                )
-
+                let credential = URLCredential(user: account.username, password: account.password, persistence: .forSession)
                 completionHandler(.useCredential, credential)
             } else if authMethod == NSURLAuthenticationMethodServerTrust {
                 // TODO: Validate the server trust
