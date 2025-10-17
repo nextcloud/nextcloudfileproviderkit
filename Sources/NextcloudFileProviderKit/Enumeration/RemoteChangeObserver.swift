@@ -82,7 +82,15 @@ public actor RemoteChangeObserver: NSObject, Sendable {
         self.dbManager = dbManager
         logger = FileProviderLogger(category: "RemoteChangeObserver", log: log)
         super.init()
-        connect()
+
+        // Authentication fixes require some type of user or external change.
+        // We don't want to reset the auth tries within reconnect web socket as this is called
+        // internally
+        webSocketAuthenticationFailCount = 0
+
+        Task {
+            await reconnectWebSocket()
+        }
     }
 
     private func startPollingTimer() {
@@ -92,7 +100,10 @@ public actor RemoteChangeObserver: NSObject, Sendable {
                 withTimeInterval: pollInterval, repeats: true
             ) { [weak self] _ in
                 self?.logger.info("Polling timer timeout, notifying change.")
-                self?.startWorkingSetCheck()
+
+                Task {
+                    await self?.startWorkingSetCheck()
+                }
             }
             logger.info("Starting polling timer.")
         }
@@ -109,14 +120,6 @@ public actor RemoteChangeObserver: NSObject, Sendable {
     public func invalidate() {
         invalidated = true
         resetWebSocket()
-    }
-
-    public func connect() {
-        // Authentication fixes require some type of user or external change.
-        // We don't want to reset the auth tries within reconnect web socket as this is called
-        // internally
-        webSocketAuthenticationFailCount = 0
-        reconnectWebSocket()
     }
 
     private func reconnectWebSocket() {
@@ -194,35 +197,12 @@ public actor RemoteChangeObserver: NSObject, Sendable {
         logger.info("Successfully configured push notifications for \(account.ncKitAccount)", [.account: account.ncKitAccount])
     }
 
-    public func authenticationChallenge(
-        _: URLSession,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard !invalidated else { return }
-        let authMethod = challenge.protectionSpace.authenticationMethod
-        logger.debug("Received auth challenge with method: \(authMethod)")
-        if authMethod == NSURLAuthenticationMethodHTTPBasic {
-            let credential = URLCredential(
-                user: account.username,
-                password: account.password,
-                persistence: .forSession
-            )
-            completionHandler(.useCredential, credential)
-        } else if authMethod == NSURLAuthenticationMethodServerTrust {
-            // TODO: Validate the server trust
-            guard let serverTrust = challenge.protectionSpace.serverTrust else {
-                logger.error("Received server trust auth challenge but no trust avail")
-                completionHandler(.cancelAuthenticationChallenge, nil)
-                return
-            }
-            let credential = URLCredential(trust: serverTrust)
-            completionHandler(.useCredential, credential)
-        } else {
-            logger.error("Unhandled auth method: \(authMethod)")
-            // Handle other authentication methods or cancel the challenge
-            completionHandler(.performDefaultHandling, nil)
-        }
+    func incrementWebSocketPingFailCount() {
+        webSocketPingFailCount += 1
+    }
+
+    func setNetworkReachability(_ typeReachability: NKTypeReachability) {
+        networkReachability = typeReachability
     }
 
     private func authenticateWebSocket() async {
@@ -241,64 +221,101 @@ public actor RemoteChangeObserver: NSObject, Sendable {
     }
 
     private func startNewWebSocketPingTask() {
-        guard !Task.isCancelled, !invalidated else { return }
+        guard !Task.isCancelled, !invalidated else {
+            return
+        }
 
         if let webSocketPingTask, !webSocketPingTask.isCancelled {
             webSocketPingTask.cancel()
         }
 
+        let account = self.accountId
+
         webSocketPingTask = Task.detached(priority: .background) {
             do {
                 try await Task.sleep(nanoseconds: self.webSocketPingIntervalNanoseconds)
             } catch {
-                self.logger.error("Could not sleep websocket ping.", [.account: self.account.ncKitAccount, .error: error])
+                self.logger.error("Could not sleep websocket ping.", [.account: account, .error: error])
             }
-            guard !Task.isCancelled else { return }
-            self.pingWebSocket()
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            Task {
+                await self.pingWebSocket()
+            }
         }
     }
 
     private func pingWebSocket() { // Keep the socket connection alive
-        guard !invalidated else { return }
+        guard !invalidated else {
+            return
+        }
+
         guard networkReachability != .notReachable else {
             logger.error("Not pinging because network is unreachable.", [.account: account.ncKitAccount])
             return
         }
 
-        webSocketTask?.sendPing { [weak self] error in
-            guard let self, !self.invalidated else { return }
-            guard error == nil else {
-                logger.error("Websocket ping failed.", [.error: error])
-                webSocketPingFailCount += 1
-                if webSocketPingFailCount > webSocketPingFailLimit {
-                    Task.detached(priority: .medium) { self.reconnectWebSocket() }
-                } else {
-                    startNewWebSocketPingTask()
+        webSocketTask?.sendPing { error in
+            Task { [weak self] in
+                guard let self else {
+                    return
                 }
-                return
-            }
 
-            startNewWebSocketPingTask()
+                guard await self.invalidated == false else {
+                    return
+                }
+
+                guard error == nil else {
+                    self.logger.error("Websocket ping failed.", [.error: error])
+                    await self.incrementWebSocketPingFailCount()
+
+                    if await self.webSocketPingFailCount > self.webSocketPingFailLimit {
+                        Task.detached(priority: .medium) {
+                            await self.reconnectWebSocket()
+                        }
+                    } else {
+                        await startNewWebSocketPingTask()
+                    }
+
+                    return
+                }
+
+                await startNewWebSocketPingTask()
+            }
         }
     }
 
     private func readWebSocket() {
-        guard !invalidated else { return }
+        guard !invalidated else {
+            return
+        }
+
         webSocketTask?.receive { result in
-            switch result {
-                case .failure:
-                    self.logger.debug("Failed to read websocket \(self.accountId)", [.account: self.accountId])
-                    // Do not reconnect here, delegate methods will handle reconnecting
-                case let .success(message):
-                    switch message {
-                        case let .data(data):
-                            self.processWebsocket(data: data)
-                        case let .string(string):
-                            self.processWebsocket(string: string)
-                        @unknown default:
-                            self.logger.error("Unknown case encountered while reading websocket!")
-                    }
-                    self.readWebSocket()
+            Task { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                switch result {
+                    case .failure:
+                        let accountId = await self.accountId
+                        self.logger.debug("Failed to read websocket.", [.account: accountId])
+                        // Do not reconnect here, delegate methods will handle reconnecting
+                    case let .success(message):
+                        switch message {
+                            case let .data(data):
+                                await self.processWebsocket(data: data)
+                            case let .string(string):
+                                await self.processWebsocket(string: string)
+                            @unknown default:
+                                self.logger.error("Unknown case encountered while reading websocket!")
+                        }
+
+                        await self.readWebSocket()
+                }
             }
         }
     }
@@ -346,44 +363,90 @@ public actor RemoteChangeObserver: NSObject, Sendable {
 
 extension RemoteChangeObserver: URLSessionWebSocketDelegate {
     nonisolated public func urlSession(_: URLSession, webSocketTask _: URLSessionWebSocketTask, didOpenWithProtocol _: String?) {
-        guard !invalidated else {
-            return
-        }
+        Task {
+            guard await invalidated == false else {
+                return
+            }
 
-        logger.debug("Websocket connected \(accountId) sending auth details", [.account: accountId])
-        Task { await authenticateWebSocket() }
+            logger.debug("Websocket connected sending auth details", [.account: await accountId])
+            await authenticateWebSocket()
+        }
     }
 
     nonisolated public func urlSession(_: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith _: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-        guard !invalidated else { return }
-        // If the task that closed is not the current active task, it means we have
-        // already initiated a reset and this is a stale callback. Ignore it.
-        guard webSocketTask === self.webSocketTask else {
-            logger.debug("An old websocket task closed, ignoring.")
-            return
+        Task {
+            guard await invalidated == false else {
+                return
+            }
+
+            // If the task that closed is not the current active task, it means we have
+            // already initiated a reset and this is a stale callback. Ignore it.
+            guard await webSocketTask === self.webSocketTask else {
+                logger.debug("An old websocket task closed, ignoring.")
+                return
+            }
+
+            logger.debug("Socket connection closed: \(String(data: reason ?? Data(), encoding: .utf8) ?? "unknown reason"). Retrying websocket connection.", [.account: await accountId])
+            await reconnectWebSocket()
         }
-
-        logger.debug("Socket connection closed for \(accountId).", [.account: accountId])
-
-        if let reason {
-            logger.debug("Reason: \(String(data: reason, encoding: .utf8) ?? "")")
-        }
-
-        logger.debug("Retrying websocket connection for \(accountId).", [.account: accountId])
-        reconnectWebSocket()
     }
-    
-    public func urlSessionDidFinishEvents(forBackgroundURLSession _: URLSession) {}
+
+    nonisolated public func urlSessionDidFinishEvents(forBackgroundURLSession _: URLSession) {}
 }
 
 // MARK: - NextcloudKitDelegate methods
 
 extension RemoteChangeObserver: NextcloudKitDelegate {
-    public func networkReachabilityObserver(_ typeReachability: NKTypeReachability) {
-        networkReachability = typeReachability
+    nonisolated public func authenticationChallenge(_: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            guard await !invalidated else {
+                return
+            }
+
+            let authMethod = challenge.protectionSpace.authenticationMethod
+            logger.debug("Received auth challenge with method: \(authMethod)")
+
+            if authMethod == NSURLAuthenticationMethodHTTPBasic {
+                let credential = URLCredential(
+                    user: account.username,
+                    password: account.password,
+                    persistence: .forSession
+                )
+
+                completionHandler(.useCredential, credential)
+            } else if authMethod == NSURLAuthenticationMethodServerTrust {
+                // TODO: Validate the server trust
+                guard let serverTrust = challenge.protectionSpace.serverTrust else {
+                    logger.error("Received server trust auth challenge but no trust avail")
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+
+                let credential = URLCredential(trust: serverTrust)
+                completionHandler(.useCredential, credential)
+            } else {
+                logger.error("Unhandled auth method: \(authMethod)")
+                // Handle other authentication methods or cancel the challenge
+                completionHandler(.performDefaultHandling, nil)
+            }
+        }
     }
 
-    public func downloadProgress(
+    nonisolated public func networkReachabilityObserver(_ typeReachability: NKTypeReachability) {
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            await self.setNetworkReachability(typeReachability)
+        }
+    }
+
+    nonisolated public func downloadProgress(
         _: Float,
         totalBytes _: Int64,
         totalBytesExpected _: Int64,
@@ -393,7 +456,7 @@ extension RemoteChangeObserver: NextcloudKitDelegate {
         task _: URLSessionTask
     ) {}
 
-    public func uploadProgress(
+    nonisolated public func uploadProgress(
         _: Float,
         totalBytes _: Int64,
         totalBytesExpected _: Int64,
@@ -403,13 +466,13 @@ extension RemoteChangeObserver: NextcloudKitDelegate {
         task _: URLSessionTask
     ) {}
 
-    public func downloadingFinish(
+    nonisolated public func downloadingFinish(
         _: URLSession,
         downloadTask _: URLSessionDownloadTask,
         didFinishDownloadingTo _: URL
     ) {}
 
-    public func downloadComplete(
+    nonisolated public func downloadComplete(
         fileName _: String,
         serverUrl _: String,
         etag _: String?,
@@ -420,7 +483,7 @@ extension RemoteChangeObserver: NextcloudKitDelegate {
         error _: NKError
     ) {}
 
-    public func uploadComplete(
+    nonisolated public func uploadComplete(
         fileName _: String,
         serverUrl _: String,
         ocId _: String?,
@@ -431,9 +494,7 @@ extension RemoteChangeObserver: NextcloudKitDelegate {
         error _: NKError
     ) {}
 
-    public func request(
-        _: Alamofire.DataRequest, didParseResponse _: Alamofire.AFDataResponse<some Any>
-    ) {}
+    nonisolated public func request(_: Alamofire.DataRequest, didParseResponse _: Alamofire.AFDataResponse<some Any>) {}
 
     ///
     /// Dispatches the asynchronous working set check.
@@ -442,7 +503,10 @@ extension RemoteChangeObserver: NextcloudKitDelegate {
     ///     - completionHandler: An optional closure to call after the working set check completed.
     ///
     func startWorkingSetCheck(completionHandler: (() -> Void)? = nil) {
-        guard !workingSetCheckOngoing, !invalidated else { return }
+        guard !workingSetCheckOngoing, !invalidated else {
+            return
+        }
+
         Task {
             await checkWorkingSet()
             completionHandler?()
