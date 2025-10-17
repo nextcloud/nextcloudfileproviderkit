@@ -31,22 +31,21 @@ extension RandomAccessCollection {
     }
 
     /// Performs an asynchronous `forEach` operation on the collection in concurrent chunks.
-    func concurrentChunkedForEach(into size: Int = defaultChunkSize, operation: @escaping (Element) async -> Void) async {
+    func concurrentChunkedForEach(into size: Int = defaultChunkSize, operation: @escaping @Sendable (Element) async -> Void) async where Element: Sendable {
         await withTaskGroup(of: Void.self) { group in
             for chunk in chunked(into: size) {
-                let chunkArray = Array(chunk) // Convert to Array to ensure Sendable
-
-                group.addTask {
+                let chunkArray = Array(chunk)
+                group.addTask(operation: { @Sendable in
                     for element in chunkArray {
                         await operation(element)
                     }
-                }
+                })
             }
         }
     }
 
     /// Performs an asynchronous `compactMap` operation on the collection in concurrent chunks.
-    func concurrentChunkedCompactMap<T>(into size: Int = defaultChunkSize, transform: @escaping (Element) throws -> T?) async throws -> [T] where T: Sendable {
+    func concurrentChunkedCompactMap<T>(into size: Int = defaultChunkSize, transform: @escaping @Sendable (Element) throws -> T?) async throws -> [T] where T: Sendable, Element: Sendable {
         try await withThrowingTaskGroup(of: [T].self) { group in
             var results = [T]()
             // Reserving capacity is still a good optimization, though we can't know the exact final count.
@@ -55,11 +54,11 @@ extension RandomAccessCollection {
             for chunk in chunked(into: size) {
                 let chunkArray = Array(chunk) // Convert to Array to ensure Sendable
 
-                group.addTask {
+                group.addTask(operation: { @Sendable in
                     try chunkArray.compactMap {
                         try transform($0)
                     }
-                }
+                })
             }
 
             for try await chunkResult in group {
