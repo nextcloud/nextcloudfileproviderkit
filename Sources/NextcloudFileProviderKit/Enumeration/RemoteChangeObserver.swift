@@ -9,19 +9,23 @@ import NextcloudKit
 
 public let NotifyPushAuthenticatedNotificationName = Notification.Name("NotifyPushAuthenticated")
 
-public final class RemoteChangeObserver: NSObject, NextcloudKitDelegate, URLSessionWebSocketDelegate {
+public actor RemoteChangeObserver: NSObject, Sendable {
+    // @unchecked Sendable is used because 'account' is mutable, but mutation is controlled and safe in this context.
     public let remoteInterface: RemoteInterface
     public let changeNotificationInterface: ChangeNotificationInterface
     public let domain: NSFileProviderDomain?
     public let dbManager: FilesDatabaseManager
-    public var account: Account
+    public let account: Account
     public var accountId: String { account.ncKitAccount }
 
-    public var webSocketPingIntervalNanoseconds: UInt64 = 3 * 1_000_000_000
-    public var webSocketReconfigureIntervalNanoseconds: UInt64 = 1 * 1_000_000_000
-    public var webSocketPingFailLimit = 8
-    public var webSocketAuthenticationFailLimit = 3
-    public var webSocketTaskActive: Bool { webSocketTask != nil }
+    public let webSocketPingIntervalNanoseconds: UInt64 = 3 * 1_000_000_000
+    public let webSocketReconfigureIntervalNanoseconds: UInt64 = 1 * 1_000_000_000
+    public let webSocketPingFailLimit = 8
+    public let webSocketAuthenticationFailLimit = 3
+
+    public var webSocketTaskActive: Bool {
+        webSocketTask != nil
+    }
 
     private let logger: FileProviderLogger
 
@@ -45,7 +49,9 @@ public final class RemoteChangeObserver: NSObject, NextcloudKitDelegate, URLSess
         }
     }
 
-    public var pollingActive: Bool { pollingTimer != nil }
+    public var pollingActive: Bool {
+        pollingTimer != nil
+    }
 
     private(set) var networkReachability: NKTypeReachability = .unknown {
         didSet {
@@ -81,7 +87,7 @@ public final class RemoteChangeObserver: NSObject, NextcloudKitDelegate, URLSess
 
     private func startPollingTimer() {
         guard !invalidated else { return }
-        Task { @MainActor in
+        Task {
             pollingTimer = Timer.scheduledTimer(
                 withTimeInterval: pollInterval, repeats: true
             ) { [weak self] _ in
@@ -93,7 +99,7 @@ public final class RemoteChangeObserver: NSObject, NextcloudKitDelegate, URLSess
     }
 
     private func stopPollingTimer() {
-        Task { @MainActor in
+        Task {
             logger.info("Stopping polling timer.")
             pollingTimer?.invalidate()
             pollingTimer = nil
@@ -219,40 +225,6 @@ public final class RemoteChangeObserver: NSObject, NextcloudKitDelegate, URLSess
         }
     }
 
-    public func urlSession(
-        _: URLSession,
-        webSocketTask _: URLSessionWebSocketTask,
-        didOpenWithProtocol _: String?
-    ) {
-        guard !invalidated else { return }
-        logger.debug("Websocket connected \(accountId) sending auth details", [.account: accountId])
-        Task { await authenticateWebSocket() }
-    }
-
-    public func urlSession(
-        _: URLSession,
-        webSocketTask: URLSessionWebSocketTask,
-        didCloseWith _: URLSessionWebSocketTask.CloseCode,
-        reason: Data?
-    ) {
-        guard !invalidated else { return }
-        // If the task that closed is not the current active task, it means we have
-        // already initiated a reset and this is a stale callback. Ignore it.
-        guard webSocketTask === self.webSocketTask else {
-            logger.debug("An old websocket task closed, ignoring.")
-            return
-        }
-
-        logger.debug("Socket connection closed for \(accountId).", [.account: accountId])
-
-        if let reason {
-            logger.debug("Reason: \(String(data: reason, encoding: .utf8) ?? "")")
-        }
-
-        logger.debug("Retrying websocket connection for \(accountId).", [.account: accountId])
-        reconnectWebSocket()
-    }
-
     private func authenticateWebSocket() async {
         guard !invalidated else {
             return
@@ -316,7 +288,7 @@ public final class RemoteChangeObserver: NSObject, NextcloudKitDelegate, URLSess
             switch result {
                 case .failure:
                     self.logger.debug("Failed to read websocket \(self.accountId)", [.account: self.accountId])
-                // Do not reconnect here, delegate methods will handle reconnecting
+                    // Do not reconnect here, delegate methods will handle reconnecting
                 case let .success(message):
                     switch message {
                         case let .data(data):
@@ -368,14 +340,48 @@ public final class RemoteChangeObserver: NSObject, NextcloudKitDelegate, URLSess
             logger.error("Received unknown string from websocket \(accountId): \(string)", [.account: accountId])
         }
     }
+}
 
-    // MARK: - NextcloudKitDelegate methods
+// MARK: - URLSessionWebSocketDelegate
 
+extension RemoteChangeObserver: URLSessionWebSocketDelegate {
+    nonisolated public func urlSession(_: URLSession, webSocketTask _: URLSessionWebSocketTask, didOpenWithProtocol _: String?) {
+        guard !invalidated else {
+            return
+        }
+
+        logger.debug("Websocket connected \(accountId) sending auth details", [.account: accountId])
+        Task { await authenticateWebSocket() }
+    }
+
+    nonisolated public func urlSession(_: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith _: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        guard !invalidated else { return }
+        // If the task that closed is not the current active task, it means we have
+        // already initiated a reset and this is a stale callback. Ignore it.
+        guard webSocketTask === self.webSocketTask else {
+            logger.debug("An old websocket task closed, ignoring.")
+            return
+        }
+
+        logger.debug("Socket connection closed for \(accountId).", [.account: accountId])
+
+        if let reason {
+            logger.debug("Reason: \(String(data: reason, encoding: .utf8) ?? "")")
+        }
+
+        logger.debug("Retrying websocket connection for \(accountId).", [.account: accountId])
+        reconnectWebSocket()
+    }
+    
+    public func urlSessionDidFinishEvents(forBackgroundURLSession _: URLSession) {}
+}
+
+// MARK: - NextcloudKitDelegate methods
+
+extension RemoteChangeObserver: NextcloudKitDelegate {
     public func networkReachabilityObserver(_ typeReachability: NKTypeReachability) {
         networkReachability = typeReachability
     }
-
-    public func urlSessionDidFinishEvents(forBackgroundURLSession _: URLSession) {}
 
     public func downloadProgress(
         _: Float,

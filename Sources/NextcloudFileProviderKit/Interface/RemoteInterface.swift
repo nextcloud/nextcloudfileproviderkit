@@ -7,23 +7,13 @@ import Foundation
 import NextcloudCapabilitiesKit
 import NextcloudKit
 
-public enum EnumerateDepth: String {
-    case target = "0"
-    case targetAndDirectChildren = "1"
-    case targetAndAllChildren = "infinity"
-}
-
-public enum AuthenticationAttemptResultState: Int {
-    case authenticationError, connectionError, success
-}
-
 ///
 /// Abstraction of the Nextcloud server APIs to call from the file provider extension.
 ///
 /// Usually, the shared `NextcloudKit` instance is conforming to this and provided as an argument.
 /// NextcloudKit is not mockable as of writing, hence this protocol was defined to enable testing.
 ///
-public protocol RemoteInterface {
+public protocol RemoteInterface: Sendable {
     func setDelegate(_ delegate: NextcloudKitDelegate)
 
     func createFolder(
