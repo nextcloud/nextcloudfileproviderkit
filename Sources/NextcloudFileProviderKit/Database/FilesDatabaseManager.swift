@@ -124,16 +124,27 @@ public final class FilesDatabaseManager: Sendable {
                     }
 
                     migration.enumerateObjects(ofType: RealmItemMetadata.className()) { _, newObject in
-                        guard let newObject,
-                              let imOcId = newObject["ocId"] as? String,
-                              localFileMetadataOcIds.contains(imOcId)
-                        else { return }
+                        guard let newObject, let imOcId = newObject["ocId"] as? String, localFileMetadataOcIds.contains(imOcId) else {
+                            return
+                        }
 
+                        newObject["deleted"] = false
                         newObject["downloaded"] = true
+                        newObject["syncTime"] = Date()
                         newObject["uploaded"] = true
+                        newObject["visitedDirectory"] = false
                     }
                 }
 
+                if oldSchemaVersion < SchemaVersion.addedIsLockFileOfLocalOriginToRealmItemMetadata.rawValue {
+                    migration.enumerateObjects(ofType: RealmItemMetadata.className()) { _, newObject in
+                        guard let newObject else {
+                            return
+                        }
+
+                        newObject["isLockFileOfLocalOrigin"] = false
+                    }
+                }
             },
             objectTypes: [RealmItemMetadata.self, RemoteFileChunk.self]
         )
@@ -164,26 +175,32 @@ public final class FilesDatabaseManager: Sendable {
             return
         }
 
-        logger.info("Migrating shared legacy database to new database for \(account.ncKitAccount)")
+        logger.info("Migrating shared legacy database to new database for \(account.ncKitAccount).")
 
-        let legacyConfiguration = Realm.Configuration(fileURL: sharedDatabaseURL, schemaVersion: SchemaVersion.deletedLocalFileMetadata.rawValue, objectTypes: [RealmItemMetadata.self, RemoteFileChunk.self])
+        let legacyConfiguration = Realm.Configuration(fileURL: sharedDatabaseURL, schemaVersion: SchemaVersion.deletedLocalFileMetadata.rawValue, objectTypes: [LegacyRealmItemMetadata.self, RemoteFileChunk.self])
 
         do {
             let legacyRealm = try Realm(configuration: legacyConfiguration)
 
-            let itemMetadatas = legacyRealm
-                .objects(RealmItemMetadata.self)
+            let legacyItemMetadatas = legacyRealm
+                .objects(LegacyRealmItemMetadata.self)
                 .filter { $0.account == account.ncKitAccount }
 
-            let remoteFileChunks = legacyRealm.objects(RemoteFileChunk.self)
+            let legacyRemoteFileChunks = legacyRealm
+                .objects(RemoteFileChunk.self)
 
-            logger.info("Migrating \(itemMetadatas.count) metadatas and \(remoteFileChunks.count) chunks.")
+            logger.info("Migrating \(legacyItemMetadatas.count) metadatas and \(legacyRemoteFileChunks.count) chunks.")
 
             let currentRealm = try Realm()
 
             try currentRealm.write {
-                itemMetadatas.forEach { currentRealm.create(RealmItemMetadata.self, value: $0) }
-                remoteFileChunks.forEach { currentRealm.create(RemoteFileChunk.self, value: $0) }
+                legacyItemMetadatas.forEach {
+                    currentRealm.create(RealmItemMetadata.self, value: $0.toRealmItemMetadata())
+                }
+
+                legacyRemoteFileChunks.forEach {
+                    currentRealm.create(RemoteFileChunk.self, value: $0)
+                }
             }
         } catch {
             logger.error("Error migrating shared legacy database to account-specific database for: \(account.ncKitAccount) because of error: \(error)")
