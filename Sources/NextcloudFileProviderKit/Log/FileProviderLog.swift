@@ -1,4 +1,4 @@
-import FileProvider
+@preconcurrency import FileProvider
 import Foundation
 import NextcloudKit
 import os
@@ -209,7 +209,7 @@ public actor FileProviderLog: FileProviderLogging {
         }
     }
 
-    private func writeToUnifiedLoggingSystem(level: OSLogType, message: String, details: [FileProviderLogDetailKey: Any?]) {
+    private func writeToUnifiedLoggingSystem(level: OSLogType, message: String, details: [FileProviderLogDetailKey: (any Sendable)?]) {
         if details.isEmpty {
             logger.log(level: level, "\(message, privacy: .public)")
             return
@@ -249,7 +249,7 @@ public actor FileProviderLog: FileProviderLogging {
         logger.log(level: level, "\(message, privacy: .public)\n\n\(detailDescriptions.joined(separator: "\n"), privacy: .public)")
     }
 
-    public func write(category: String, level: OSLogType, message: String, details: [FileProviderLogDetailKey: Any?]) {
+    public func write(category: String, level: OSLogType, message: String, details: [FileProviderLogDetailKey: (any Sendable)?]) {
         #if DEBUG
 
             writeToUnifiedLoggingSystem(level: level, message: message, details: details)

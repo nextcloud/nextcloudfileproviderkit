@@ -152,7 +152,10 @@ public actor RemoteChangeObserver: NSObject, Sendable {
     }
 
     private func configureNotifyPush() async {
-        guard !invalidated else { return }
+        guard !invalidated else {
+            return
+        }
+
         let (_, capabilities, _, error) = await remoteInterface.currentCapabilities(
             account: account,
             options: .init(),
@@ -644,15 +647,13 @@ extension RemoteChangeObserver: NextcloudKitDelegate {
         }
 
         allDeletedMetadatas = checkedDeletedMetadatas
-        let task = Task { @MainActor in
-            for deletedMetadata in allDeletedMetadatas {
-                var deleteMarked = deletedMetadata
-                deleteMarked.deleted = true
-                deleteMarked.syncTime = Date()
-                dbManager.addItemMetadata(deleteMarked)
-            }
+
+        for deletedMetadata in allDeletedMetadatas {
+            var deleteMarked = deletedMetadata
+            deleteMarked.deleted = true
+            deleteMarked.syncTime = Date()
+            dbManager.addItemMetadata(deleteMarked)
         }
-        _ = await task.result
 
         logger.info("Finished change enumeration of working set. Examined item IDs: \(examinedItemIds), materialized item IDs: \(materialisedItems.map(\.ocId))")
 
