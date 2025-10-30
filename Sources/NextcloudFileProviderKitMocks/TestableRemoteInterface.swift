@@ -29,7 +29,7 @@ public struct TestableRemoteInterface: RemoteInterface, @unchecked Sendable {
         account _: Account,
         options _: NKRequestOptions,
         requestHandler _: @escaping (UploadRequest) -> Void,
-        taskHandler _: @escaping (URLSessionTask) -> Void,
+        taskHandler _: @Sendable @escaping (URLSessionTask) -> Void,
         progressHandler _: @escaping (Progress) -> Void
     ) async -> (
         account: String,
@@ -56,7 +56,7 @@ public struct TestableRemoteInterface: RemoteInterface, @unchecked Sendable {
         log _: any FileProviderLogging,
         chunkUploadStartHandler _: @escaping ([RemoteFileChunk]) -> Void,
         requestHandler _: @escaping (UploadRequest) -> Void,
-        taskHandler _: @escaping (URLSessionTask) -> Void,
+        taskHandler _: @Sendable @escaping (URLSessionTask) -> Void,
         progressHandler _: @escaping (Progress) -> Void,
         chunkUploadCompleteHandler _: @escaping (RemoteFileChunk) -> Void
     ) async -> (
@@ -74,17 +74,17 @@ public struct TestableRemoteInterface: RemoteInterface, @unchecked Sendable {
         overwrite _: Bool,
         account _: Account,
         options _: NKRequestOptions,
-        taskHandler _: @escaping (URLSessionTask) -> Void
+        taskHandler _: @Sendable @escaping (URLSessionTask) -> Void
     ) async -> (account: String, data: Data?, error: NKError) { ("", nil, .invalidResponseError) }
 
     public func downloadAsync(
-        serverUrlFileName _: Any,
-        fileNameLocalPath _: String,
-        account _: String,
-        options _: NKRequestOptions,
-        requestHandler _: @escaping (_ request: DownloadRequest) -> Void,
-        taskHandler _: @escaping (_ task: URLSessionTask) -> Void,
-        progressHandler _: @escaping (_ progress: Progress) -> Void
+        serverUrlFileName: Any,
+        fileNameLocalPath: String,
+        account: String,
+        options: NKRequestOptions,
+        requestHandler: @escaping (_ request: DownloadRequest) -> Void,
+        taskHandler: @Sendable @escaping (_ task: URLSessionTask) -> Void,
+        progressHandler: @escaping (_ progress: Progress) -> Void
     ) async -> (
         account: String,
         etag: String?,
@@ -105,7 +105,7 @@ public struct TestableRemoteInterface: RemoteInterface, @unchecked Sendable {
         requestBody _: Data?,
         account _: Account,
         options _: NKRequestOptions,
-        taskHandler _: @escaping (URLSessionTask) -> Void
+        taskHandler _: @Sendable @escaping (URLSessionTask) -> Void
     ) async -> (account: String, files: [NKFile], data: AFDataResponse<Data>?, error: NKError) {
         ("", [], nil, .invalidResponseError)
     }
@@ -114,18 +114,27 @@ public struct TestableRemoteInterface: RemoteInterface, @unchecked Sendable {
         remotePath _: String,
         account _: Account,
         options _: NKRequestOptions,
-        taskHandler _: @escaping (URLSessionTask) -> Void
+        taskHandler _: @Sendable @escaping (URLSessionTask) -> Void
     ) async -> (account: String, response: HTTPURLResponse?, error: NKError) {
         ("", nil, .invalidResponseError)
     }
 
-    public func lockUnlockFile(serverUrlFileName _: String, type _: NKLockType?, shouldLock _: Bool, account _: Account, options _: NKRequestOptions, taskHandler _: @escaping (URLSessionTask) -> Void) async throws -> NKLock? {
+    public func lockUnlockFile(serverUrlFileName _: String, type _: NKLockType?, shouldLock _: Bool, account _: Account, options _: NKRequestOptions, taskHandler _: @Sendable @escaping (URLSessionTask) -> Void) async throws -> NKLock? {
         throw NKError.invalidResponseError
     }
 
-    public func trashedItems(
-        account _: Account, options _: NKRequestOptions, taskHandler _: @escaping (URLSessionTask) -> Void
-    ) async -> (account: String, trashedItems: [NKTrash], data: Data?, error: NKError) {
+    public func listingTrashAsync(
+        filename: String?,
+        showHiddenFiles: Bool,
+        account: String,
+        options: NKRequestOptions,
+        taskHandler: @Sendable @escaping (_ task: URLSessionTask) -> Void
+    ) async -> (
+        account: String,
+        items: [NKTrash]?,
+        responseData: AFDataResponse<Data>?,
+        error: NKError
+    ) {
         ("", [], nil, .invalidResponseError)
     }
 
@@ -133,35 +142,41 @@ public struct TestableRemoteInterface: RemoteInterface, @unchecked Sendable {
         filename _: String,
         account _: Account,
         options _: NKRequestOptions,
-        taskHandler _: @escaping (URLSessionTask) -> Void
+        taskHandler _: @Sendable @escaping (URLSessionTask) -> Void
     ) async -> (account: String, data: Data?, error: NKError) { ("", nil, .invalidResponseError) }
 
     public func downloadThumbnail(
         url _: URL,
         account _: Account,
         options _: NKRequestOptions,
-        taskHandler _: @escaping (URLSessionTask) -> Void
+        taskHandler _: @Sendable @escaping (URLSessionTask) -> Void
     ) async -> (account: String, data: Data?, error: NKError) { ("", nil, .invalidResponseError) }
 
-    public func fetchUserProfile(
-        account _: Account, options _: NKRequestOptions, taskHandler _: @escaping (URLSessionTask) -> Void
-    ) async -> (account: String, userProfile: NKUserProfile?, data: Data?, error: NKError) {
+    public func getUserProfileAsync(
+        account: String,
+        options: NKRequestOptions,
+        taskHandler: @Sendable @escaping (_ task: URLSessionTask) -> Void
+    ) async -> (
+        account: String,
+        userProfile: NKUserProfile?,
+        responseData: AFDataResponse<Data>?,
+        error: NKError
+    ) {
         ("", nil, nil, .invalidResponseError)
     }
 
     public func tryAuthenticationAttempt(
-        account _: Account, options _: NKRequestOptions, taskHandler _: @escaping (URLSessionTask) -> Void
+        account _: Account, options _: NKRequestOptions, taskHandler _: @Sendable @escaping (URLSessionTask) -> Void
     ) async -> AuthenticationAttemptResultState { .connectionError }
 
     public typealias FetchResult = (account: String, capabilities: Capabilities?, data: Data?, error: NKError)
 
-    public var fetchCapabilitiesHandler:
-        ((Account, NKRequestOptions, @escaping (URLSessionTask) -> Void) async -> FetchResult)?
+    public var fetchCapabilitiesHandler: (@Sendable (Account, NKRequestOptions, @Sendable @escaping (URLSessionTask) -> Void) async -> FetchResult)?
 
     public func fetchCapabilities(
         account: Account,
         options: NKRequestOptions = .init(),
-        taskHandler: @escaping (_ task: URLSessionTask) -> Void = { _ in }
+        taskHandler: @Sendable @escaping (_ task: URLSessionTask) -> Void = { _ in }
     ) async -> FetchResult {
         let ncKitAccount = account.ncKitAccount
         await RetrievedCapabilitiesActor.shared.setOngoingFetch(
