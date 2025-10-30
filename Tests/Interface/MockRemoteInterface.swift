@@ -554,7 +554,7 @@ let mockCapabilities = ##"""
 }
 """##
 
-public class MockRemoteInterface: RemoteInterface {
+final public class MockRemoteInterface: RemoteInterface, @unchecked Sendable {
     public var capabilities = mockCapabilities
     public var rootItem: MockRemoteItem?
     public var delegate: (any NextcloudKitDelegate)?
@@ -607,7 +607,7 @@ public class MockRemoteInterface: RemoteInterface {
         return sanitisedPath
     }
 
-    func item(remotePath: String, account: Account) -> MockRemoteItem? {
+    func item(remotePath: String, account: String) -> MockRemoteItem? {
         guard let rootItem, !remotePath.isEmpty else {
             print("Invalid root item or remote path, cannot get item in item tree.")
             return nil
@@ -978,28 +978,29 @@ public class MockRemoteInterface: RemoteInterface {
         return (account.ncKitAccount, nil, .success)
     }
 
-    public func download(
-        remotePath: String,
-        localPath: String,
-        account: Account,
-        options _: NKRequestOptions = .init(),
-        requestHandler _: @escaping (DownloadRequest) -> Void = { _ in },
-        taskHandler _: @escaping (URLSessionTask) -> Void = { _ in },
-        progressHandler _: @escaping (Progress) -> Void = { _ in }
+    public func downloadAsync(
+        serverUrlFileName: Any,
+        fileNameLocalPath: String,
+        account: String,
+        options: NKRequestOptions,
+        requestHandler: @escaping (_ request: DownloadRequest) -> Void,
+        taskHandler: @Sendable @escaping (_ task: URLSessionTask) -> Void,
+        progressHandler: @escaping (_ progress: Progress) -> Void
     ) async -> (
         account: String,
         etag: String?,
-        date: NSDate?,
+        date: Date?,
         length: Int64,
-        headers: [AnyHashable: Any]?,
+        headers: [AnyHashable: any Sendable]?,
         afError: AFError?,
         nkError: NKError
     ) {
-        guard let item = item(remotePath: remotePath, account: account) else {
-            return (account.ncKitAccount, nil, nil, 0, nil, nil, .urlError)
+        guard let item = item(remotePath: serverUrlFileName as! String, account: account) else {
+            return (account, nil, nil, 0, nil, nil, .urlError)
         }
 
-        let localUrl = URL(fileURLWithPath: localPath)
+        let localUrl = URL(fileURLWithPath: fileNameLocalPath)
+
         do {
             if item.directory {
                 print("Creating directory at \(localUrl) for item \(item.name)")
@@ -1007,17 +1008,17 @@ public class MockRemoteInterface: RemoteInterface {
                 try fm.createDirectory(at: localUrl, withIntermediateDirectories: true)
             } else {
                 print("Writing data to \(localUrl) for item \(item.name)")
-                try item.data?.write(to: localUrl, options: .atomic)
+                try item.data?.write(to: localUrl)
             }
         } catch {
             print("Could not write item data: \(error)")
-            return (account.ncKitAccount, nil, nil, 0, nil, nil, .urlError)
+            return (account, nil, nil, 0, nil, nil, .urlError)
         }
 
         return (
-            account.ncKitAccount,
+            account,
             item.versionIdentifier,
-            item.creationDate as NSDate,
+            item.creationDate as Date,
             item.size,
             nil,
             nil,
@@ -1171,11 +1172,18 @@ public class MockRemoteInterface: RemoteInterface {
         return nil
     }
 
-    public func trashedItems(
-        account: Account,
-        options _: NKRequestOptions = .init(),
-        taskHandler _: @escaping (URLSessionTask) -> Void = { _ in }
-    ) async -> (account: String, trashedItems: [NKTrash], data: Data?, error: NKError) {
+    public func listingTrashAsync(
+        filename: String?,
+        showHiddenFiles: Bool,
+        account: String,
+        options: NKRequestOptions,
+        taskHandler: @Sendable @escaping (_ task: URLSessionTask) -> Void
+    ) async -> (
+        account: String,
+        items: [NKTrash]?,
+        responseData: AFDataResponse<Data>?,
+        error: NKError
+    ) {
         guard let rootTrashItem else { return (account.ncKitAccount, [], nil, .invalidData) }
         return (account.ncKitAccount, rootTrashItem.children.map { $0.toNKTrash() }, nil, .success)
     }
@@ -1224,11 +1232,16 @@ public class MockRemoteInterface: RemoteInterface {
         return Capabilities(data: capsData ?? Data())
     }
 
-    public func fetchUserProfile(
-        account: Account,
-        options _: NKRequestOptions = .init(),
-        taskHandler _: @escaping (URLSessionTask) -> Void = { _ in }
-    ) async -> (account: String, userProfile: NKUserProfile?, data: Data?, error: NKError) {
+    func getUserProfileAsync(
+        account: String,
+        options: NKRequestOptions,
+        taskHandler: @Sendable @escaping (_ task: URLSessionTask) -> Void
+    ) async -> (
+        account: String,
+        userProfile: NKUserProfile?,
+        responseData: AFDataResponse<Data>?,
+        error: NKError
+    ) {
         let profile = NKUserProfile()
         profile.address = account.serverUrl
         profile.backend = "mock"
