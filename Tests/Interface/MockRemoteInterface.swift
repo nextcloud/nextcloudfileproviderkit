@@ -978,28 +978,32 @@ public class MockRemoteInterface: RemoteInterface {
         return (account.ncKitAccount, nil, .success)
     }
 
-    public func download(
-        remotePath: String,
-        localPath: String,
-        account: Account,
-        options _: NKRequestOptions = .init(),
-        requestHandler _: @escaping (DownloadRequest) -> Void = { _ in },
-        taskHandler _: @escaping (URLSessionTask) -> Void = { _ in },
-        progressHandler _: @escaping (Progress) -> Void = { _ in }
+    public func downloadAsync(
+        serverUrlFileName: Any,
+        fileNameLocalPath: String,
+        account: String,
+        options: NKRequestOptions,
+        requestHandler: @escaping (_ request: DownloadRequest) -> Void,
+        taskHandler: @escaping (_ task: URLSessionTask) -> Void,
+        progressHandler: @escaping (_ progress: Progress) -> Void
     ) async -> (
         account: String,
         etag: String?,
-        date: NSDate?,
+        date: Date?,
         length: Int64,
-        headers: [AnyHashable: Any]?,
+        headers: [AnyHashable: any Sendable]?,
         afError: AFError?,
         nkError: NKError
     ) {
-        guard let item = item(remotePath: remotePath, account: account) else {
-            return (account.ncKitAccount, nil, nil, 0, nil, nil, .urlError)
+        return (account, nil, nil, 0, nil, nil, .urlError)
+
+        /* FIXME: The conformance to standard NextcloudKit download method makes the item() stub impossible to work like this which requires refactoring.
+        guard let item = item(remotePath: serverUrlFileName, account: account) else {
+            return (account, nil, nil, 0, nil, nil, .urlError)
         }
 
-        let localUrl = URL(fileURLWithPath: localPath)
+        let localUrl = URL(fileURLWithPath: fileNameLocalPath)
+
         do {
             if item.directory {
                 print("Creating directory at \(localUrl) for item \(item.name)")
@@ -1007,22 +1011,23 @@ public class MockRemoteInterface: RemoteInterface {
                 try fm.createDirectory(at: localUrl, withIntermediateDirectories: true)
             } else {
                 print("Writing data to \(localUrl) for item \(item.name)")
-                try item.data?.write(to: localUrl, options: .atomic)
+                try item.data?.write(to: localUrl)
             }
         } catch {
             print("Could not write item data: \(error)")
-            return (account.ncKitAccount, nil, nil, 0, nil, nil, .urlError)
+            return (account, nil, nil, 0, nil, nil, .urlError)
         }
 
         return (
-            account.ncKitAccount,
+            account,
             item.versionIdentifier,
-            item.creationDate as NSDate,
+            item.creationDate as Date,
             item.size,
             nil,
             nil,
             .success
         )
+        */
     }
 
     public func enumerate(
