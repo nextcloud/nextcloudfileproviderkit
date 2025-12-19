@@ -9,6 +9,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # NextcloudFileProviderKit
 
+> [!WARNING]
+> **This repository is deprecated.** The Swift package has been migrated into its upstream project repository. See related issue [#136](https://github.com/nextcloud/nextcloudfileproviderkit/issues/136) and pull request [#9176 on the Nextcloud desktop client repository](https://github.com/nextcloud/nextcloudfileproviderkit/pull/9176) for further information. This repository remains publicly available, though, but active development takes place [here](https://github.com/nextcloud/desktop/tree/master/shell_integration/MacOSX/NextcloudFileProviderKit) now.
+
 NextcloudFileProviderKit is a Swift package designed to simplify the development of Nextcloud synchronization applications on Apple devices using the [File Provider Framework](https://developer.apple.com/documentation/FileProvider). This package provides the core functionality for virtual files in the macOS Nextcloud client, making it easier for developers to integrate Nextcloud syncing capabilities into their applications.
 
 NextcloudFileProviderKit depends on NextcloudKit to communicate with the server.
