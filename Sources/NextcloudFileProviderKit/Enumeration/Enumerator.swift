@@ -537,6 +537,17 @@ public final class Enumerator: NSObject, NSFileProviderEnumerator, Sendable {
             allDeletedMetadatas = deletedMetadatas
         }
 
+        // Protect items with pending uploads: their local data is not yet on the server.
+        allDeletedMetadatas.removeAll { deletedMetadata in
+            guard deletedMetadata.status >= Status.inUpload.rawValue else { return false }
+            logger.info("Skipping deletion of item with pending upload.", [.item: deletedMetadata.ocId])
+            return true
+        }
+
+        // Report parents before children so macOS creates a moved directory before placing its
+        // contents, preventing both the old and new folder name from appearing during a rename.
+        allUpdatedMetadatas.sort { $0.remotePath().count < $1.remotePath().count }
+
         let allFpItemDeletionsIdentifiers = Array(
             allDeletedMetadatas.map { NSFileProviderItemIdentifier($0.ocId) })
         if !allFpItemDeletionsIdentifiers.isEmpty {

@@ -74,7 +74,20 @@ public extension FilesDatabaseManager {
             $0.account == directoryAccount && $0.serverUrl.starts(with: directoryUrlPath)
         }
 
+        // Protect items whose local data is not yet on the server from deletion when their
+        // parent is removed. Otherwise a moved or renamed parent would wipe unsynced children.
+        // TODO: the parent directory itself is still deleted here, so a protected child is
+        // orphaned once its upload completes. Follow up by deferring parent deletion or
+        // reparenting the child after the upload finishes.
         for result in results {
+            if result.status >= Status.inUpload.rawValue {
+                logger.info("Skipping deletion of child with pending upload.", [.item: result.ocId])
+                continue
+            }
+            if result.isLockFileOfLocalOrigin {
+                logger.info("Skipping deletion of local origin lock file during directory delete.", [.item: result.ocId, .name: result.fileName])
+                continue
+            }
             let inactiveItemMetadata = SendableItemMetadata(value: result)
             do {
                 try database.write { result.deleted = true }
