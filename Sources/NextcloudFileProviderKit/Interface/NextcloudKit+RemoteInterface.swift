@@ -60,7 +60,17 @@ extension NextcloudKit: RemoteInterface {
                 requestHandler: requestHandler,
                 taskHandler: taskHandler,
                 progressHandler: progressHandler
-            ) { account, ocId, etag, date, size, response, nkError in
+            ) { account, response, nkError in
+                let allHeaderFields = response?.response?.allHeaderFields
+                let ocId = self.nkCommonInstance.findHeader("oc-fileid", allHeaderFields: allHeaderFields)
+                let etag = self.nkCommonInstance.normalizedETag(self.nkCommonInstance.findHeader("oc-etag", allHeaderFields: allHeaderFields))
+                let date = self.nkCommonInstance.findHeader("date", allHeaderFields: allHeaderFields)?.parsedDate(using: "EEE, dd MMM y HH:mm:ss zzz")
+                var size: Int64 = 0
+
+                if let value = allHeaderFields?["Content-Length"] as? String {
+                    size = Int64(value) ?? 0
+                }
+
                 continuation.resume(returning: (
                     account,
                     ocId,
@@ -88,7 +98,7 @@ extension NextcloudKit: RemoteInterface {
         chunkCounter: @escaping (_ counter: Int) -> Void = { _ in },
         log: any FileProviderLogging,
         chunkUploadStartHandler: @escaping (_ filesChunk: [RemoteFileChunk]) -> Void = { _ in },
-        requestHandler: @escaping (_ request: UploadRequest) -> Void = { _ in },
+        requestHandler _: @escaping (_ request: UploadRequest) -> Void = { _ in },
         taskHandler: @escaping (_ task: URLSessionTask) -> Void = { _ in },
         progressHandler: @escaping (Progress) -> Void = { _ in },
         chunkUploadCompleteHandler: @escaping (_ fileChunk: RemoteFileChunk) -> Void = { _ in }
@@ -154,8 +164,10 @@ extension NextcloudKit: RemoteInterface {
             """
         )
 
-        return await withCheckedContinuation { continuation in
-            uploadChunk(
+        var startedChunks: [RemoteFileChunk] = []
+
+        do {
+            let (uploadAccount, file) = try await uploadChunkAsync(
                 directory: directory,
                 fileChunksOutputDirectory: fileChunksOutputDirectory,
                 fileName: fileName,
@@ -168,17 +180,19 @@ extension NextcloudKit: RemoteInterface {
                 chunkSize: chunkSize,
                 account: account.ncKitAccount,
                 options: options,
-                numChunks: currentNumChunksUpdateHandler,
-                counterChunk: chunkCounter,
-                start: { processedChunks in
+                chunkProgressHandler: { total, counter in
+                    currentNumChunksUpdateHandler(total)
+                    chunkCounter(counter)
+                },
+                uploadStart: { processedChunks in
                     let chunks = RemoteFileChunk.fromNcKitChunks(
                         processedChunks, remoteChunkStoreFolderName: remoteChunkStoreFolderName
                     )
+                    startedChunks = chunks
                     chunkUploadStartHandler(chunks)
                 },
-                requestHandler: requestHandler,
-                taskHandler: taskHandler,
-                progressHandler: { totalBytesExpected, totalBytes, _ in
+                uploadTaskHandler: taskHandler,
+                uploadProgressHandler: { totalBytesExpected, totalBytes, _ in
                     let currentProgress = Progress(totalUnitCount: totalBytesExpected)
                     currentProgress.completedUnitCount = totalBytes
                     progressHandler(currentProgress)
@@ -190,11 +204,64 @@ extension NextcloudKit: RemoteInterface {
                     )
                     chunkUploadCompleteHandler(chunk)
                 }
-            ) { account, receivedChunks, file, error in
-                let chunks = RemoteFileChunk.fromNcKitChunks(
-                    receivedChunks ?? [], remoteChunkStoreFolderName: remoteChunkStoreFolderName
-                )
-                continuation.resume(returning: (account, chunks, file, error))
+            )
+
+            return (uploadAccount, startedChunks, file, .success)
+        } catch let nkError as NKError {
+            return (account.ncKitAccount, nil, nil, nkError)
+        } catch {
+            return (account.ncKitAccount, nil, nil, .urlError)
+        }
+    }
+
+    /// NextcloudKit 7.3.x changed its own downloadAsync to return the raw AFDownloadResponse,
+    /// which no longer matches RemoteInterface. Provide a conforming wrapper that parses the
+    /// metadata the callers expect from the response headers.
+    public func downloadAsync(
+        serverUrlFileName: Any,
+        fileNameLocalPath: String,
+        account: String,
+        options: NKRequestOptions = .init(),
+        requestHandler: @escaping (_ request: DownloadRequest) -> Void = { _ in },
+        taskHandler: @Sendable @escaping (_ task: URLSessionTask) -> Void = { _ in },
+        progressHandler: @escaping (_ progress: Progress) -> Void = { _ in }
+    ) async -> (
+        account: String,
+        etag: String?,
+        date: Date?,
+        length: Int64,
+        headers: [AnyHashable: any Sendable]?,
+        afError: AFError?,
+        nkError: NKError
+    ) {
+        await withCheckedContinuation { continuation in
+            download(
+                serverUrlFileName: serverUrlFileName,
+                fileNameLocalPath: fileNameLocalPath,
+                account: account,
+                options: options,
+                requestHandler: requestHandler,
+                taskHandler: taskHandler,
+                progressHandler: progressHandler
+            ) { account, response, nkError in
+                let allHeaderFields = response?.response?.allHeaderFields
+                let etag = self.nkCommonInstance.normalizedETag(self.nkCommonInstance.findHeader("oc-etag", allHeaderFields: allHeaderFields))
+                let date = self.nkCommonInstance.findHeader("date", allHeaderFields: allHeaderFields)?.parsedDate(using: "EEE, dd MMM y HH:mm:ss zzz")
+                var length: Int64 = 0
+
+                if let value = allHeaderFields?["Content-Length"] as? String {
+                    length = Int64(value) ?? 0
+                }
+
+                continuation.resume(returning: (
+                    account,
+                    etag,
+                    date,
+                    length,
+                    allHeaderFields as? [AnyHashable: any Sendable],
+                    response?.error,
+                    nkError
+                ))
             }
         }
     }
